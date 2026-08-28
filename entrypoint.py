@@ -14,6 +14,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
+DRIVER_LIBRARY_DIRS = (
+    "/usr/local/nvidia/lib64",
+    "/usr/local/nvidia/lib",
+    "/lib/x86_64-linux-gnu",
+    "/usr/lib/x86_64-linux-gnu",
+)
+
+
 def env_int(name: str, default: int, minimum: int = 1) -> int:
     raw = os.getenv(name, str(default))
     try:
@@ -96,6 +104,25 @@ def build_command(model_path: Path) -> list[str]:
     return command
 
 
+def runtime_environment() -> dict[str, str]:
+    """Prefer Runpod's host-injected driver over CUDA's forward-compat shim."""
+    environment = os.environ.copy()
+    host_driver_dirs = [
+        directory
+        for directory in DRIVER_LIBRARY_DIRS
+        if (Path(directory) / "libcuda.so.1").exists()
+    ]
+    inherited_dirs = [
+        directory
+        for directory in environment.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+        if directory and "/cuda" not in directory.lower() and "/compat" not in directory.lower()
+    ]
+    library_dirs = list(dict.fromkeys(host_driver_dirs + inherited_dirs))
+    if library_dirs:
+        environment["LD_LIBRARY_PATH"] = os.pathsep.join(library_dirs)
+    return environment
+
+
 def upstream_ready(port: int) -> bool:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
     try:
@@ -141,7 +168,13 @@ def main() -> int:
     command = build_command(model_path)
     safe_command = ["<redacted>" if arg == os.getenv("NINFER_API_KEY") else arg for arg in command]
     print("Starting:", " ".join(safe_command), flush=True)
-    process = subprocess.Popen(command)
+    process_environment = runtime_environment()
+    print(
+        "CUDA driver library search:",
+        process_environment.get("LD_LIBRARY_PATH", "<system default>"),
+        flush=True,
+    )
+    process = subprocess.Popen(command, env=process_environment)
 
     def forward_signal(signum: int, _frame: object) -> None:
         if process.poll() is None:

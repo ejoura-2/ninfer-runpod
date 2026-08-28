@@ -42,6 +42,28 @@ class EntrypointTests(unittest.TestCase):
             command = entrypoint.build_command(Path("/models/model.ninfer"))
         self.assertEqual(command[-2:], ["--api-key", "secret"])
 
+    def test_runtime_prefers_host_driver_and_removes_cuda_compat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            driver_dir = Path(directory) / "host-driver"
+            driver_dir.mkdir()
+            (driver_dir / "libcuda.so.1").touch()
+            inherited_dir = str(Path(directory) / "other-libs")
+            compat_dir = "/usr/local/cuda-13.1/compat"
+            with (
+                patch.object(entrypoint, "DRIVER_LIBRARY_DIRS", (str(driver_dir),)),
+                patch.dict(
+                    os.environ,
+                    {"LD_LIBRARY_PATH": os.pathsep.join((compat_dir, inherited_dir))},
+                    clear=True,
+                ),
+            ):
+                environment = entrypoint.runtime_environment()
+
+        self.assertEqual(
+            environment["LD_LIBRARY_PATH"],
+            os.pathsep.join((str(driver_dir), inherited_dir)),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

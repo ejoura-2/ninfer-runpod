@@ -35,6 +35,10 @@ RUN cmake -S . -B /build -G Ninja \
 
 FROM build AS debug
 
+# Runpod injects the real host driver in these directories. CUDA 13.1 also
+# ships a forward-compat libcuda which cannot initialize GeForce GPUs.
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/nvidia/lib:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu
+
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
@@ -51,6 +55,8 @@ STOPSIGNAL SIGTERM
 ENTRYPOINT ["python3", "/opt/ninfer-runpod/debug_entrypoint.py"]
 
 FROM nvidia/cuda:13.1.2-runtime-ubuntu24.04
+
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/nvidia/lib:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
