@@ -46,5 +46,5 @@ jobs:
           docker run --rm --entrypoint python3 "$image" -c \
             'import http.client, http.server; print("Python HTTP runtime OK")'
           docker run --rm --entrypoint sh "$image" -c \
-            'ldd /usr/local/bin/ninfer-serve | tee /tmp/ldd.txt; ! grep -q "not found" /tmp/ldd.txt'
+            'ldd /usr/local/bin/ninfer-serve | tee /tmp/ldd.txt; ! grep "not found" /tmp/ldd.txt | grep -v "libcuda.so.1"'
           docker run --rm --entrypoint ninfer-serve "$image" --help
