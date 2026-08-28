@@ -38,4 +38,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
+      - name: Verify runtime image
+        shell: bash
+        run: |
+          image="ghcr.io/${{ github.repository_owner }}/ninfer-runpod:latest"
+          docker pull "$image"
+          docker run --rm --entrypoint python3 "$image" -c \
+            'import http.client, http.server; print("Python HTTP runtime OK")'
+          docker run --rm --entrypoint sh "$image" -c \
+            'ldd /usr/local/bin/ninfer-serve | tee /tmp/ldd.txt; ! grep -q "not found" /tmp/ldd.txt'
+          docker run --rm --entrypoint ninfer-serve "$image" --help
