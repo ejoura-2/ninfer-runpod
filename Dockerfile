@@ -25,9 +25,14 @@ RUN git init \
     && git fetch --depth 1 origin "${NINFER_REF}" \
     && git checkout --detach FETCH_HEAD
 
+COPY patches/ninfer-target-sm-count.patch /tmp/ninfer-target-sm-count.patch
+RUN git apply --check /tmp/ninfer-target-sm-count.patch \
+    && git apply /tmp/ninfer-target-sm-count.patch
+
 RUN cmake -S . -B /build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CUDA_ARCHITECTURES=120a \
+        -DNINFER_TARGET_SM_COUNT=188 \
         -DNINFER_BUILD_APPS=ON \
         -DBUILD_TESTING=OFF \
         -DNINFER_BUILD_BENCHMARKS=OFF \

@@ -5,7 +5,7 @@ This project packages NInfer for a scale-to-zero Runpod load-balancing endpoint 
 - `lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4`
 - one RTX PRO 6000 Blackwell Server Edition (96 GB)
 - vision, thinking, and MTP speculative decoding
-- a 262,144-token logical context ceiling with FP8 KV cache
+- a 262,144-token logical context ceiling with INT8 KV cache
 - an OpenAI-compatible streaming API
 
 ## Runpod endpoint settings
@@ -52,6 +52,6 @@ Load-balancing requests have a 30 MB payload limit, so URLs are preferable for l
 
 Scale-to-zero means the first request after idling must wait for a cold start and model load. The
 60-second idle timeout avoids repeatedly unloading the model during a short chat while still
-stopping billing shortly after use. NInfer is compiled for `sm_120a` and upstream performance is
-tuned on RTX 5090; RTX PRO 6000 compatibility and throughput must be confirmed with a cloud smoke
-test.
+stopping billing shortly after use. NInfer is compiled for `sm_120a` and this image applies
+`patches/ninfer-target-sm-count.patch` with a target of 188 SMs, matching the RTX PRO 6000
+Blackwell Server Edition. The upstream default remains 170 SMs for RTX 5090 builds.

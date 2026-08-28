@@ -1,0 +1,224 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ca3f6c4..0ca0274 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -18,6 +18,13 @@ project(ninfer LANGUAGES C CXX CUDA)
+ option(NINFER_BUILD_APPS "Build the NInfer CLI and server" ON)
+ option(BUILD_TESTING "Build NInfer tests" OFF)
+ option(NINFER_BUILD_BENCHMARKS "Build NInfer benchmarks" OFF)
++set(NINFER_TARGET_SM_COUNT "170" CACHE STRING "Target GPU streaming multiprocessor count")
++if(NOT NINFER_TARGET_SM_COUNT MATCHES "^[1-9][0-9]*$")
++  message(FATAL_ERROR
++    "NINFER_TARGET_SM_COUNT must be a positive integer; got '${NINFER_TARGET_SM_COUNT}'")
++endif()
++add_compile_definitions(NINFER_TARGET_SM_COUNT=${NINFER_TARGET_SM_COUNT})
++message(STATUS "NInfer target SM count: ${NINFER_TARGET_SM_COUNT}")
+ 
+ set(CMAKE_CXX_STANDARD 20)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+diff --git a/src/core/device_target.h b/src/core/device_target.h
+new file mode 100644
+index 0000000..eab36a0
+--- /dev/null
++++ b/src/core/device_target.h
+@@ -0,0 +1,14 @@
++#pragma once
++
++#ifndef NINFER_TARGET_SM_COUNT
++#define NINFER_TARGET_SM_COUNT 170
++#endif
++
++namespace ninfer {
++
++inline constexpr int kTargetSmCount = NINFER_TARGET_SM_COUNT;
++static_assert(kTargetSmCount > 0);
++static_assert(kTargetSmCount % 2 == 0,
++              "registered Blackwell targets must have an even SM count");
++
++} // namespace ninfer
+diff --git a/src/ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp b/src/ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp
+index 4b99ba9..7fd6f92 100644
+--- a/src/ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp
++++ b/src/ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp
+@@ -2,6 +2,8 @@
+ 
+ #include "ninfer/ops/rmsnorm.h"
+ 
++#include "core/device_target.h"
++
+ #include <algorithm>
+ #include <array>
+ #include <limits>
+@@ -125,18 +127,18 @@ bool cooperative_grid_is_resident(Bf16GdnGatingScheduleId schedule, std::int32_t
+ 
+ bool cooperative_27_grid_is_resident(Bf16GdnGatingScheduleId schedule, std::int32_t cols) noexcept {
+     // BN128 uses 40 KiB of dynamic shared memory. Split8 uses 71 registers with 256 threads;
+-    // split4/2 use 62 registers with 512 threads. Each specialization admits two CTAs/SM, hence
+-    // 340 resident CTAs device-wide. There are three 16-row tiles per token tile.
+-    return cooperative_grid_is_resident(schedule, cols, 128, 3, 340);
++    // split4/2 use 62 registers with 512 threads. Each specialization admits two CTAs/SM. There
++    // are three 16-row tiles per token tile.
++    return cooperative_grid_is_resident(schedule, cols, 128, 3, kTargetSmCount * 2);
+ }
+ 
+ bool cooperative_35_grid_is_resident(Bf16GdnGatingScheduleId schedule, std::int32_t cols) noexcept {
+     // BN64 uses 24 KiB of dynamic shared memory and two 16-row tiles. With the registered CUDA
+     // 13.1/sm_120a build, split32 uses 91/93 registers per thread and admits two CTAs/SM;
+-    // split16/8/4/2 use at most 62 registers and admit four CTAs/SM. Across 170 SMs the
+-    // device-wide limits are 340 and 680 CTAs respectively.
++    // split16/8/4/2 use at most 62 registers and admit four CTAs/SM.
+     const std::int32_t resident_ctas =
+-        schedule == Bf16GdnGatingScheduleId::MmaCooperativeSplit32 ? 340 : 680;
++        schedule == Bf16GdnGatingScheduleId::MmaCooperativeSplit32 ? kTargetSmCount * 2
++                                                                  : kTargetSmCount * 4;
+     return cooperative_grid_is_resident(schedule, cols, 64, 2, resident_ctas);
+ }
+ 
+diff --git a/src/ops/kernel/gqa_attention_decode.cuh b/src/ops/kernel/gqa_attention_decode.cuh
+index 4795357..e8d7c2f 100644
+--- a/src/ops/kernel/gqa_attention_decode.cuh
++++ b/src/ops/kernel/gqa_attention_decode.cuh
+@@ -106,7 +106,7 @@ __device__ __forceinline__ int gqa_small_t_active_splits(int window, int launch_
+         } else if (tokens == 6 && window > 5000 && window <= 8198) {
+             splits             = div_up(window, 192 / Geometry::DecodeSplitScale);
+             constexpr int kMin = 4 * Geometry::DecodeSplitScale;
+-            constexpr int kMax = 42 * Geometry::DecodeSplitScale;
++            constexpr int kMax = (kTargetSmCount / 4) * Geometry::DecodeSplitScale;
+             splits             = splits > kMin ? splits : kMin;
+             splits             = splits < kMax ? splits : kMax;
+         } else {
+diff --git a/src/ops/kernel/gqa_attention_geometry.cuh b/src/ops/kernel/gqa_attention_geometry.cuh
+index 9f67e27..29b5f99 100644
+--- a/src/ops/kernel/gqa_attention_geometry.cuh
++++ b/src/ops/kernel/gqa_attention_geometry.cuh
+@@ -1,5 +1,7 @@
+ #pragma once
+ 
++#include "core/device_target.h"
++
+ // Exact grouped-query head geometries served by the Qwen3.6 GQA kernels. Head
+ // dimension, cache format, and tile policy are shared; head mapping remains a
+ // compile-time property so each registered shape gets an independent kernel.
+@@ -16,7 +18,7 @@ struct GqaGeometry {
+     static constexpr int KVHeads          = KVHeadsValue;
+     static constexpr int GroupSize        = QHeads / KVHeads;
+     static constexpr int DecodeSplitScale = DecodeSplitScaleValue;
+-    static constexpr int DecodeSplits     = 85 * DecodeSplitScale;
++    static constexpr int DecodeSplits     = (kTargetSmCount / 2) * DecodeSplitScale;
+ };
+ 
+ using Gqa27Geometry = GqaGeometry<24, 4, 1>;
+diff --git a/src/ops/launcher/gqa_attention_decode.cu b/src/ops/launcher/gqa_attention_decode.cu
+index ea28608..f4887f1 100644
+--- a/src/ops/launcher/gqa_attention_decode.cu
++++ b/src/ops/launcher/gqa_attention_decode.cu
+@@ -51,12 +51,13 @@ std::int32_t gqa_small_t_split_count(std::int32_t window, std::int32_t tokens, D
+     if (kv_dtype == DType::I8 && tokens == 6 && window > 128 && window <= 160) {
+         return div_up(window, 24 / Geometry::DecodeSplitScale);
+     }
+-    // Bc=64 is one CTA/SM on these model shapes. Keep the 8K grid at or below
+-    // one 170-SM wave after accounting for the geometry's KV-head count.
++    // Bc=64 is one CTA/SM on these model shapes. Keep the 8K grid at or below one target-GPU wave
++    // after accounting for the geometry's KV-head count.
+     if (kv_dtype == DType::I8 && tokens == 6 && window > 5000 && window <= 8198) {
+         const std::int32_t splits   = div_up(window, 192 / Geometry::DecodeSplitScale);
+         constexpr std::int32_t kMin = 4 * Geometry::DecodeSplitScale;
+-        constexpr std::int32_t kMax = 42 * Geometry::DecodeSplitScale;
++        constexpr std::int32_t kMax =
++            (kTargetSmCount / 4) * Geometry::DecodeSplitScale;
+         const std::int32_t clamped  = (splits > kMin) ? splits : kMin;
+         return (clamped < kMax) ? clamped : kMax;
+     }
+diff --git a/src/ops/launcher/rope.cu b/src/ops/launcher/rope.cu
+index 03ca183..fd04788 100644
+--- a/src/ops/launcher/rope.cu
++++ b/src/ops/launcher/rope.cu
+@@ -2,6 +2,7 @@
+ #include "ops/launcher/rope.h"
+ 
+ #include "core/device.h" // CUDA_CHECK
++#include "core/device_target.h"
+ #include "ops/kernel/rope.cuh"
+ 
+ #include <cstdint>
+@@ -13,8 +14,8 @@ constexpr int kLargeBlock               = 256;
+ constexpr int kFullChunkBlock           = 192;
+ constexpr int kSmallBlock               = 128;
+ constexpr int kDefaultChunkTargetTokens = 1024;
+-// RTX 5090 has 170 SMs and admits six of these 256-thread CTAs per SM.
+-constexpr int kLargeBlockWaveCapacity = 1020;
++// Registered sm_120a targets admit six of these 256-thread CTAs per SM.
++constexpr int kLargeBlockWaveCapacity = kTargetSmCount * 6;
+ 
+ template <RopeKernelMode Mode>
+ inline constexpr bool kTextMode =
+diff --git a/src/ops/linear_attention/gated_delta_net/chunked/output.cu b/src/ops/linear_attention/gated_delta_net/chunked/output.cu
+index 25dd7b3..fbc8f23 100644
+--- a/src/ops/linear_attention/gated_delta_net/chunked/output.cu
++++ b/src/ops/linear_attention/gated_delta_net/chunked/output.cu
+@@ -1,14 +1,15 @@
+ #include "ops/linear_attention/gated_delta_net/chunked/launch.h"
+ #include "ops/linear_attention/gated_delta_net/chunked/output.cuh"
+ 
++#include "core/device_target.h"
++
+ namespace ninfer::ops::detail::gated_delta_net::chunked {
+ namespace {
+ 
+ namespace kernel = output;
+ 
+-constexpr std::int64_t kRtx5090SmCount = 170;
+-constexpr std::int64_t kCtasPerSm      = 4;
+-constexpr std::int64_t kTargetCtas     = kRtx5090SmCount * kCtasPerSm;
++constexpr std::int64_t kCtasPerSm  = 4;
++constexpr std::int64_t kTargetCtas = kTargetSmCount * kCtasPerSm;
+ 
+ template <bool MULTI_JOB>
+ cudaError_t launch_fixed(const chunk_output_config& cfg, dim3 grid, head_map qk_map, int chunks) {
+@@ -40,8 +41,8 @@ cudaError_t launch_output(const chunk_output_config& cfg) {
+     const auto qk_map     = head_map::of((int)cfg.H_qk, (int)cfg.H_v);
+     const std::int64_t NT = cfg.L / BT;
+ 
+-    // Keep at most one resident RTX 5090 wave and distribute chunks evenly
+-    // across it. Small grids retain one logical job per CTA.
++    // Keep at most one resident target-GPU wave and distribute chunks evenly across it. Small
++    // grids retain one logical job per CTA.
+     const std::int64_t logical_jobs   = NT * cfg.H_v;
+     const std::int64_t jobs_per_block = (logical_jobs + kTargetCtas - 1) / kTargetCtas;
+     const std::int64_t grid_chunks    = (NT + jobs_per_block - 1) / jobs_per_block;
+diff --git a/src/ops/sparse_moe/decode/sparse_moe_decode_kernels.cu b/src/ops/sparse_moe/decode/sparse_moe_decode_kernels.cu
+index 12a68e0..b3f20fe 100644
+--- a/src/ops/sparse_moe/decode/sparse_moe_decode_kernels.cu
++++ b/src/ops/sparse_moe/decode/sparse_moe_decode_kernels.cu
+@@ -263,7 +263,7 @@ __global__ void sparse_moe_d3_path_tiled_kernel(
+     const std::uint8_t* __restrict__ routed_scales, const std::uint8_t* __restrict__ shared_codes,
+     const std::uint8_t* __restrict__ shared_scales, float* __restrict__ token_activations,
+     int tokens, const int* __restrict__ adaptive_route_jobs) {
+-    // Three path CTAs per token/output row expose enough blocks for the 170-SM target and keep the
++    // Three path CTAs per token/output row expose enough blocks for the registered target and keep
+     // heavier shared W8 path from holding eight completed routed warps resident.
+     static_assert(PathsPerBlock > 0 && (kTopK + 1) % PathsPerBlock == 0);
+     constexpr int kPathBlocks = (kTopK + 1) / PathsPerBlock;
+diff --git a/src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu b/src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu
+index 39653a2..edc3976 100644
+--- a/src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu
++++ b/src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu
+@@ -1,6 +1,7 @@
+ #include "ops/sparse_moe/prefill/sparse_moe_prefill.h"
+ 
+ #include "core/device.h"
++#include "core/device_target.h"
+ #include "ops/common/math.cuh"
+ #include "ops/common/memory.cuh"
+ #include "ops/common/mma.cuh"
+@@ -253,9 +254,8 @@ constexpr int kExpertBK                = 64;
+ constexpr int kExpertStages            = 2;
+ constexpr int kExpertWarps             = 8;
+ constexpr int kExpertThreads           = 32 * kExpertWarps;
+-constexpr int kRtx5090SmCount          = 170;
+ constexpr int kPrefillBlocksPerSm      = 3;
+-constexpr int kPrefillPersistentBlocks = kPrefillBlocksPerSm * kRtx5090SmCount;
++constexpr int kPrefillPersistentBlocks = kPrefillBlocksPerSm * kTargetSmCount;
+ 
+ template <int ExpertWarps, int ExpertBN>
+ __global__ __launch_bounds__(ExpertWarps * 32, 3) void sparse_moe_prefill_q4_gate_up_kernel(
