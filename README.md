@@ -23,7 +23,8 @@ Use the container image produced by `.github/workflows/container.yml`, then conf
 | FlashBoot | Enabled |
 | Cached model | `lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4` |
 | HTTP port | `8080` |
-| Health port | `8081` |
+| Public and health port | `8080` |
+| Internal NInfer port | `8082` |
 | Health path | `/ping` |
 
 Copy the non-secret environment variables from `runpod.env.example`. Do not put a Runpod API key
@@ -54,4 +55,3 @@ Scale-to-zero means the first request after idling must wait for a cold start an
 stopping billing shortly after use. NInfer is compiled for `sm_120a` and upstream performance is
 tuned on RTX 5090; RTX PRO 6000 compatibility and throughput must be confirmed with a cloud smoke
 test.
-

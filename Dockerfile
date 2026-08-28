@@ -61,9 +61,9 @@ ENV MODEL_REPO_ID=lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4 \
     DEFAULT_MAX_TOKENS=32768 \
     DRAFT_TOKENS=3 \
     PORT=8080 \
-    PORT_HEALTH=8081
+    PORT_HEALTH=8080 \
+    NINFER_PORT=8082
 
-EXPOSE 8080 8081
+EXPOSE 8080
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["python3", "/opt/ninfer-runpod/entrypoint.py"]
-

@@ -30,6 +30,12 @@ class EntrypointTests(unittest.TestCase):
         self.assertIn("mtp", command)
         self.assertIn("--preserve-thinking", command)
         self.assertIn("fp8", command)
+        self.assertEqual(command[command.index("--port") + 1], "8082")
+
+    def test_ninfer_uses_internal_port(self):
+        with patch.dict(os.environ, {"NINFER_PORT": "9000"}, clear=True):
+            command = entrypoint.build_command(Path("/models/model.ninfer"))
+        self.assertEqual(command[command.index("--port") + 1], "9000")
 
     def test_optional_ninfer_key_is_forwarded(self):
         with patch.dict(os.environ, {"NINFER_API_KEY": "secret"}, clear=True):
@@ -39,4 +45,3 @@ class EntrypointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
