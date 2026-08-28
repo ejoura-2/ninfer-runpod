@@ -44,7 +44,7 @@ RUN apt-get update \
         libavutil58 \
         libcurl4t64 \
         libswscale7 \
-        python3-minimal \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /build/apps/ninfer-serve /usr/local/bin/ninfer-serve
