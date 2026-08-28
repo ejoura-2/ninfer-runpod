@@ -77,7 +77,7 @@ def build_command(model_path: Path) -> list[str]:
         "--prefill-chunk",
         str(env_int("PREFILL_CHUNK", 4096)),
         "--kv-dtype",
-        os.getenv("KV_DTYPE", "fp8"),
+        os.getenv("KV_DTYPE", "int8"),
         "--default-max-tokens",
         str(env_int("DEFAULT_MAX_TOKENS", 32768)),
         "--max-request-mib",

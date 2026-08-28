@@ -29,7 +29,7 @@ class EntrypointTests(unittest.TestCase):
         self.assertIn("--vision", command)
         self.assertIn("mtp", command)
         self.assertIn("--preserve-thinking", command)
-        self.assertIn("fp8", command)
+        self.assertIn("int8", command)
         self.assertEqual(command[command.index("--port") + 1], "8080")
 
     def test_ninfer_uses_public_port(self):
