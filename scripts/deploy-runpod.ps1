@@ -28,8 +28,8 @@ $envConfig = @{
     DEFAULT_MAX_TOKENS = '32768'
     DRAFT_TOKENS = '3'
     PORT = '8080'
-    PORT_HEALTH = '8080'
-    NINFER_PORT = '8082'
+    PORT_HEALTH = '8081'
+    RUNPOD_INIT_TIMEOUT = '800'
     HEALTH_CHECK_PATH = '/ping'
 }
 
@@ -44,7 +44,7 @@ try {
         isPublic = $false
         isServerless = $true
         name = $templateName
-        ports = @('8080/http')
+        ports = @('8080/http', '8081/http')
         readme = 'NInfer Qwen3.8-27B Huihui Abliterated NVFP4 load-balancing worker.'
         volumeInGb = 0
         volumeMountPath = '/runpod-volume'

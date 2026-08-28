@@ -23,8 +23,8 @@ Use the container image produced by `.github/workflows/container.yml`, then conf
 | FlashBoot | Enabled |
 | Cached model | `lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4` |
 | HTTP port | `8080` |
-| Public and health port | `8080` |
-| Internal NInfer port | `8082` |
+| OpenAI API port | `8080` |
+| Readiness port | `8081` |
 | Health path | `/ping` |
 
 Copy the non-secret environment variables from `runpod.env.example`. Do not put a Runpod API key
