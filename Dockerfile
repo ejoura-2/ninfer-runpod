@@ -33,6 +33,23 @@ RUN cmake -S . -B /build -G Ninja \
         -DNINFER_BUILD_BENCHMARKS=OFF \
     && cmake --build /build --parallel --target ninfer-serve
 
+FROM build AS debug
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        curl \
+        openssh-server \
+        python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd /root/.ssh /models
+
+COPY debug_entrypoint.py /opt/ninfer-runpod/debug_entrypoint.py
+
+EXPOSE 22
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["python3", "/opt/ninfer-runpod/debug_entrypoint.py"]
+
 FROM nvidia/cuda:13.1.2-runtime-ubuntu24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
