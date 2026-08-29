@@ -49,6 +49,20 @@ curl https://ENDPOINT_ID.api.runpod.ai/v1/chat/completions \
 For vision, use OpenAI-compatible typed content with an `image_url` HTTP(S) URL or base64 data URL.
 Load-balancing requests have a 30 MB payload limit, so URLs are preferable for large images.
 
+## Benchmark an active worker
+
+The benchmark helper sends one warm-up followed by three measured 512-token requests:
+
+```bash
+python scripts/benchmark-ninfer.py \
+  --base-url http://127.0.0.1:8080 \
+  --runs 4 \
+  --max-tokens 512
+```
+
+Add `--vision-file image.jpg` to benchmark an embedded image, or `--vision-url URL` to let the
+worker fetch an image. Embedded images avoid certificate and remote-host variability.
+
 ## Operational notes
 
 Scale-to-zero means the first request after idling must wait for a cold start and model load. The
