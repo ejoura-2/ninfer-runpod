@@ -23,7 +23,36 @@ class QueueHandlerTests(unittest.TestCase):
         )
         self.assertEqual(route, "/v1/chat/completions")
         self.assertEqual(method, "POST")
-        self.assertIs(normalized, body)
+        self.assertEqual(normalized, body)
+        self.assertIsNot(normalized, body)
+
+    def test_pi_reasoning_effort_high_maps_to_ninfer_xhigh(self):
+        body = {
+            "model": "test",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "high",
+        }
+        _, _, normalized = queue_handler.normalize_job_input(
+            {"openai_route": "/v1/chat/completions", "openai_input": body}
+        )
+        self.assertEqual(normalized["reasoning_effort"], "xhigh")
+        self.assertEqual(body["reasoning_effort"], "high")
+
+    def test_openai_reasoning_effort_aliases_map_to_supported_levels(self):
+        for source, expected in {
+            "minimal": "low",
+            "low": "low",
+            "medium": "medium",
+            "high": "xhigh",
+            "xhigh": "xhigh",
+            "max": "xhigh",
+            "none": "none",
+        }.items():
+            with self.subTest(source=source):
+                normalized = queue_handler.normalize_reasoning_effort(
+                    {"reasoning_effort": source}
+                )
+                self.assertEqual(normalized["reasoning_effort"], expected)
 
     def test_openai_models_route_is_get(self):
         route, method, body = queue_handler.normalize_job_input(

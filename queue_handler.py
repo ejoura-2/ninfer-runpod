@@ -17,6 +17,13 @@ NINFER_BASE_URL = os.getenv(
 )
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "3600"))
 DEFAULT_CHAT_ROUTE = "/v1/chat/completions"
+REASONING_EFFORT_ALIASES = {
+    # Pi/OpenAI clients commonly expose these effort names, while NInfer's
+    # Qwen effort-aware template accepts low, medium, and xhigh.
+    "minimal": "low",
+    "high": "xhigh",
+    "max": "xhigh",
+}
 
 ninfer_process = None
 
@@ -25,11 +32,20 @@ def _is_ninfer_alive() -> bool:
     return ninfer_process is None or ninfer_process.poll() is None
 
 
+def normalize_reasoning_effort(body: dict[str, Any]) -> dict[str, Any]:
+    """Translate OpenAI/Pi effort aliases to NInfer's Qwen effort levels."""
+    normalized = dict(body)
+    effort = normalized.get("reasoning_effort")
+    if isinstance(effort, str):
+        normalized["reasoning_effort"] = REASONING_EFFORT_ALIASES.get(effort, effort)
+    return normalized
+
+
 def normalize_job_input(job_input: dict[str, Any]) -> tuple[str, str, dict | None]:
     """Return a local NInfer route, HTTP method, and optional request body."""
     if job_input.get("openai_input"):
         route = job_input.get("openai_route") or DEFAULT_CHAT_ROUTE
-        return route, "POST", job_input["openai_input"]
+        return route, "POST", normalize_reasoning_effort(job_input["openai_input"])
 
     if "openai_route" in job_input:
         return job_input["openai_route"], "GET", None
@@ -52,13 +68,13 @@ def normalize_job_input(job_input: dict[str, Any]) -> tuple[str, str, dict | Non
     body.setdefault("model", os.getenv("MODEL_ID", "qwen3.8-27b-huihui-abliterated"))
     if messages is not None:
         body["messages"] = messages
-        return DEFAULT_CHAT_ROUTE, "POST", body
+        return DEFAULT_CHAT_ROUTE, "POST", normalize_reasoning_effort(body)
 
     # NInfer intentionally exposes Chat Completions rather than the legacy
     # OpenAI /v1/completions route. Preserve the shorthand by promoting the
     # prompt to a user message.
     body["messages"] = [{"role": "user", "content": prompt}]
-    return DEFAULT_CHAT_ROUTE, "POST", body
+    return DEFAULT_CHAT_ROUTE, "POST", normalize_reasoning_effort(body)
 
 
 async def iter_sse_frames(chunks: AsyncIterable[bytes]) -> AsyncGenerator[str, None]:
