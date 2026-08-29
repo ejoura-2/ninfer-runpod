@@ -17,6 +17,7 @@ Use the container image produced by `.github/workflows/container.yml`, then conf
 | Endpoint type | Load Balancer |
 | GPU | RTX PRO 6000 Blackwell Server Edition |
 | GPUs per worker | 1 |
+| Container disk | 40 GB |
 | Active workers | 0 |
 | Max workers | 1 |
 | Idle timeout | 60 seconds |

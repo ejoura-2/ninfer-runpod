@@ -36,7 +36,9 @@ $envConfig = @{
 try {
     $templateBody = @{
         category = 'NVIDIA'
-        containerDiskInGb = 10
+        # Leave headroom above the 21.5 GB cached NInfer artifact. Runpod's cached-model
+        # guidance recommends allocating at least the model size.
+        containerDiskInGb = 40
         dockerEntrypoint = @()
         dockerStartCmd = @()
         env = $envConfig
