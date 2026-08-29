@@ -64,9 +64,13 @@ EXPOSE 22
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["python3", "/opt/ninfer-runpod/debug_entrypoint.py"]
 
-FROM nvidia/cuda:13.1.2-runtime-ubuntu24.04
+FROM ubuntu:24.04
 
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/nvidia/lib:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu
+# The host injects libcuda. NInfer only dynamically links CUDA's small runtime
+# library, so copying it directly avoids shipping the 1.2 GB CUDA runtime image.
+COPY --from=build /usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13* /usr/local/lib/
+
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/nvidia/lib:/usr/local/lib:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
@@ -79,6 +83,7 @@ RUN apt-get update \
         libswscale7 \
         python3 \
     && rm -rf /var/lib/apt/lists/*
+RUN ldconfig
 
 COPY --from=build /build/apps/ninfer-serve /usr/local/bin/ninfer-serve
 COPY entrypoint.py /opt/ninfer-runpod/entrypoint.py
