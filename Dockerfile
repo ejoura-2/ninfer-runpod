@@ -32,7 +32,7 @@ RUN git apply --check /tmp/ninfer-target-sm-count.patch \
 RUN cmake -S . -B /build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CUDA_ARCHITECTURES=120a \
-        -DNINFER_TARGET_SM_COUNT=188 \
+        -DNINFER_TARGET_SM_COUNT=170 \
         -DNINFER_BUILD_APPS=ON \
         -DBUILD_TESTING=OFF \
         -DNINFER_BUILD_BENCHMARKS=OFF \
@@ -82,17 +82,23 @@ RUN apt-get update \
         libcurl4t64 \
         libswscale7 \
         python3 \
+        python3-pip \
     && rm -rf /var/lib/apt/lists/*
 RUN ldconfig
 
 COPY --from=build /build/apps/ninfer-serve /usr/local/bin/ninfer-serve
 COPY entrypoint.py /opt/ninfer-runpod/entrypoint.py
+COPY queue_entrypoint.py /opt/ninfer-runpod/queue_entrypoint.py
+COPY queue_handler.py /opt/ninfer-runpod/queue_handler.py
+COPY requirements.txt /opt/ninfer-runpod/requirements.txt
+RUN python3 -m pip install --break-system-packages --no-cache-dir \
+        --requirement /opt/ninfer-runpod/requirements.txt
 
 ENV MODEL_REPO_ID=lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4 \
     MODEL_FILENAME=qwen3_8_27b_nvfp4.ninfer \
     MODEL_ID=qwen3.8-27b-huihui-abliterated \
-    MAX_CONTEXT=262144 \
-    KV_CAPACITY=262144 \
+    MAX_CONTEXT=204800 \
+    KV_CAPACITY=204800 \
     KV_DTYPE=int8 \
     MAX_CONCURRENCY=1 \
     PREFILL_CHUNK=4096 \
@@ -100,8 +106,9 @@ ENV MODEL_REPO_ID=lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4 \
     DRAFT_TOKENS=3 \
     PORT=8080 \
     PORT_HEALTH=8081 \
-    RUNPOD_INIT_TIMEOUT=800
+    RUNPOD_INIT_TIMEOUT=1200 \
+    REQUEST_TIMEOUT=3600
 
 EXPOSE 8080 8081
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["python3", "/opt/ninfer-runpod/entrypoint.py"]
+ENTRYPOINT ["python3", "/opt/ninfer-runpod/queue_entrypoint.py"]

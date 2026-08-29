@@ -22,10 +22,29 @@ class EntrypointTests(unittest.TestCase):
             with patch.dict(os.environ, {"MODEL_PATH": str(model)}, clear=True):
                 self.assertEqual(entrypoint.resolve_model_path(), model)
 
+    def test_cached_model_fallback_handles_normalized_repo_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_root = Path(directory)
+            model = (
+                cache_root
+                / "models--lyf--qwen3.8-27b-huihui-abliterated-ninfer-nvfp4"
+                / "snapshots"
+                / "revision"
+                / "qwen3_8_27b_nvfp4.ninfer"
+            )
+            model.parent.mkdir(parents=True)
+            model.touch()
+            with patch.dict(
+                os.environ,
+                {"RUNPOD_MODEL_CACHE": str(cache_root)},
+                clear=True,
+            ):
+                self.assertEqual(entrypoint.resolve_model_path(), model)
+
     def test_command_enables_full_context_vision_and_thinking(self):
         with patch.dict(os.environ, {}, clear=True):
             command = entrypoint.build_command(Path("/models/model.ninfer"))
-        self.assertIn("262144", command)
+        self.assertIn("204800", command)
         self.assertIn("--vision", command)
         self.assertIn("mtp", command)
         self.assertIn("--preserve-thinking", command)

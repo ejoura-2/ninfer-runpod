@@ -44,9 +44,19 @@ def resolve_model_path() -> Path:
             "MODEL_REPO_ID",
             "lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4",
         )
+        cache_root = Path(
+            os.getenv(
+                "RUNPOD_MODEL_CACHE",
+                "/runpod-volume/huggingface-cache/hub",
+            )
+        )
         cache_name = "models--" + repo_id.replace("/", "--")
         patterns = [
-            f"/runpod-volume/huggingface-cache/hub/{cache_name}/snapshots/*/{filename}",
+            str(cache_root / cache_name / "snapshots" / "*" / filename),
+            # Runpod may normalize cached repository directory names to lowercase.
+            # An endpoint mounts only its configured cached model, so a filename
+            # fallback is unambiguous and survives that normalization.
+            str(cache_root / "models--*" / "snapshots" / "*" / filename),
             f"/runpod-volume/{filename}",
             f"/models/{filename}",
         ]
@@ -77,9 +87,9 @@ def build_command(model_path: Path) -> list[str]:
         "--model-id",
         os.getenv("MODEL_ID", "qwen3.8-27b-huihui-abliterated"),
         "--max-context",
-        str(env_int("MAX_CONTEXT", 262144)),
+        str(env_int("MAX_CONTEXT", 204800)),
         "--kv-capacity",
-        os.getenv("KV_CAPACITY", "262144"),
+        os.getenv("KV_CAPACITY", "204800"),
         "--max-concurrency",
         str(env_int("MAX_CONCURRENCY", 1)),
         "--prefill-chunk",

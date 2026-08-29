@@ -1,12 +1,12 @@
 # Qwen3.8-27B Abliterated NInfer on Runpod Serverless
 
-This project packages NInfer for a scale-to-zero Runpod load-balancing endpoint using:
+This project packages NInfer for a scale-to-zero Runpod queue endpoint using:
 
 - `lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4`
-- one RTX PRO 6000 Blackwell Server Edition (96 GB)
+- one GeForce RTX 5090 (32 GB)
 - vision, thinking, and MTP speculative decoding
-- a 262,144-token logical context ceiling with INT8 KV cache
-- an OpenAI-compatible streaming API
+- a 204,800-token logical context ceiling with INT8 KV cache
+- Runpod's durable job queue plus its OpenAI-compatible streaming gateway
 
 ## Runpod endpoint settings
 
@@ -14,19 +14,17 @@ Use the container image produced by `.github/workflows/container.yml`, then conf
 
 | Setting | Value |
 |---|---|
-| Endpoint type | Load Balancer |
-| GPU | RTX PRO 6000 Blackwell Server Edition |
+| Endpoint type | Queue |
+| GPU | GeForce RTX 5090 |
 | GPUs per worker | 1 |
-| Container disk | 40 GB |
+| Container disk | 80 GB |
 | Active workers | 0 |
 | Max workers | 1 |
-| Idle timeout | 60 seconds |
+| Idle timeout | 300 seconds |
 | FlashBoot | Enabled |
 | Cached model | `lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4` |
-| HTTP port | `8080` |
-| OpenAI API port | `8080` |
-| Readiness port | `8081` |
-| Health path | `/ping` |
+| Internal NInfer port | `8080` |
+| External OpenAI route | `https://api.runpod.ai/v2/ENDPOINT_ID/openai/v1` |
 
 Copy the non-secret environment variables from `runpod.env.example`. Do not put a Runpod API key
 or Hugging Face token in this repository. The model is public and does not require an HF token.
@@ -34,7 +32,7 @@ or Hugging Face token in this repository. The model is public and does not requi
 ## Request example
 
 ```bash
-curl https://ENDPOINT_ID.api.runpod.ai/v1/chat/completions \
+curl https://api.runpod.ai/v2/ENDPOINT_ID/openai/v1/chat/completions \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -47,7 +45,7 @@ curl https://ENDPOINT_ID.api.runpod.ai/v1/chat/completions \
 ```
 
 For vision, use OpenAI-compatible typed content with an `image_url` HTTP(S) URL or base64 data URL.
-Load-balancing requests have a 30 MB payload limit, so URLs are preferable for large images.
+Image URLs are preferable to base64 payloads for large images.
 
 ## Benchmark an active worker
 
@@ -65,8 +63,8 @@ worker fetch an image. Embedded images avoid certificate and remote-host variabi
 
 ## Operational notes
 
-Scale-to-zero means the first request after idling must wait for a cold start and model load. The
-60-second idle timeout avoids repeatedly unloading the model during a short chat while still
-stopping billing shortly after use. NInfer is compiled for `sm_120a` and this image applies
-`patches/ninfer-target-sm-count.patch` with a target of 188 SMs, matching the RTX PRO 6000
-Blackwell Server Edition. The upstream default remains 170 SMs for RTX 5090 builds.
+Scale-to-zero means the first request after idling must wait for a cold start and model load. Use
+the asynchronous `/run` route for the first cold request so the job remains queued while Runpod
+prepares the cached model; warm OpenAI requests can use `/openai/v1`. The 300-second idle timeout
+keeps a short chat warm and then stops GPU billing. NInfer is compiled for `sm_120a` with a target
+of 170 SMs, matching the RTX 5090.

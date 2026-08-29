@@ -2,7 +2,7 @@
 param(
     [string]$ApiKey = $env:RUNPOD_API_KEY,
     [string]$Image = 'ghcr.io/ejoura-2/ninfer-runpod:latest',
-    [string]$ModelReference = 'https://huggingface.co/lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4:main'
+    [string]$ModelReference = 'https://huggingface.co/lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4:181446902fc777c479749e98cf2abf2250263a8d'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,7 +12,7 @@ if (-not $ApiKey) {
 
 $headers = @{ Authorization = "Bearer $ApiKey" }
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$templateName = "ninfer-qwen38-lb-$timestamp"
+$templateName = "ninfer-qwen38-queue-$timestamp"
 $templateId = $null
 $endpointId = $null
 
@@ -20,25 +20,22 @@ $envConfig = @{
     MODEL_REPO_ID = 'lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4'
     MODEL_FILENAME = 'qwen3_8_27b_nvfp4.ninfer'
     MODEL_ID = 'qwen3.8-27b-huihui-abliterated'
-    MAX_CONTEXT = '262144'
-    KV_CAPACITY = '262144'
+    MAX_CONTEXT = '204800'
+    KV_CAPACITY = '204800'
     KV_DTYPE = 'int8'
     MAX_CONCURRENCY = '1'
     PREFILL_CHUNK = '4096'
     DEFAULT_MAX_TOKENS = '32768'
     DRAFT_TOKENS = '3'
     PORT = '8080'
-    PORT_HEALTH = '8081'
-    RUNPOD_INIT_TIMEOUT = '800'
-    HEALTH_CHECK_PATH = '/ping'
+    RUNPOD_INIT_TIMEOUT = '1200'
+    REQUEST_TIMEOUT = '3600'
 }
 
 try {
     $templateBody = @{
         category = 'NVIDIA'
-        # Leave headroom above the 21.5 GB cached NInfer artifact. Runpod's cached-model
-        # guidance recommends allocating at least the model size.
-        containerDiskInGb = 40
+        containerDiskInGb = 80
         dockerEntrypoint = @()
         dockerStartCmd = @()
         env = $envConfig
@@ -46,8 +43,8 @@ try {
         isPublic = $false
         isServerless = $true
         name = $templateName
-        ports = @('8080/http', '8081/http')
-        readme = 'NInfer Qwen3.8-27B Huihui Abliterated NVFP4 load-balancing worker.'
+        ports = @()
+        readme = 'NInfer Qwen3.8-27B Huihui Abliterated NVFP4 queue worker with OpenAI passthrough.'
         volumeInGb = 0
         volumeMountPath = '/runpod-volume'
     } | ConvertTo-Json -Depth 10
@@ -70,15 +67,15 @@ mutation SaveEndpoint($input: EndpointInput!) {
         input = @{
             name = 'ninfer-qwen38-27b-abliterated'
             templateId = $templateId
-            type = 'LB'
-            gpuIds = 'BLACKWELL_96'
+            type = 'QB'
+            gpuIds = 'ADA_32_PRO'
             gpuCount = 1
             workersMin = 0
             workersMax = 1
-            idleTimeout = 60
-            scalerType = 'REQUEST_COUNT'
-            scalerValue = 1
-            executionTimeoutMs = 330000
+            idleTimeout = 300
+            scalerType = 'QUEUE_DELAY'
+            scalerValue = 4
+            executionTimeoutMs = 3600000
             flashBootType = 'FLASHBOOT'
             modelReferences = @($ModelReference)
         }
@@ -91,19 +88,14 @@ mutation SaveEndpoint($input: EndpointInput!) {
         throw ($graph.errors | ConvertTo-Json -Depth 10 -Compress)
     }
     $endpointId = $graph.data.saveEndpoint.id
-    Write-Host "Created load-balancing endpoint: $endpointId"
+    Write-Host "Created queue endpoint: $endpointId"
 
     $gpuPatch = @{
         gpu = @{
-            pools = @('BLACKWELL_96')
-            excludedTypes = @(
-                'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition',
-                'NVIDIA RTX PRO 6000 Blackwell Workstation Edition'
-            )
+            pools = @('ADA_32_PRO')
+            excludedTypes = @()
             count = 1
-            allowedCudaVersions = @('13.2')
-            # GraphQL endpoint creation defaults this to 12.0. REST v2 requires the
-            # inherited floor to be cleared in the same request as an exact allowlist.
+            allowedCudaVersions = @('13.0')
             minCudaVersion = ''
         }
     } | ConvertTo-Json -Depth 10
