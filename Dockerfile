@@ -38,6 +38,11 @@ RUN cmake -S . -B /build -G Ninja \
         -DNINFER_BUILD_BENCHMARKS=OFF \
     && cmake --build /build --parallel --target ninfer-serve
 
+# NInfer links CUDA kernels into one very large executable. Remove ELF symbol
+# tables before copying it into the runtime image so Serverless workers have
+# substantially less data to pull during cold starts.
+RUN strip --strip-unneeded /build/apps/ninfer-serve
+
 FROM build AS debug
 
 # Runpod injects the real host driver in these directories. CUDA 13.1 also

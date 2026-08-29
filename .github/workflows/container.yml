@@ -38,6 +38,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
       - name: Build and push interactive debug image
         uses: docker/build-push-action@v6
         with:
@@ -50,6 +52,8 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/ninfer-runpod:debug-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
       - name: Verify runtime image
         shell: bash
         run: |
