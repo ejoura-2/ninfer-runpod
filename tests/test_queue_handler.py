@@ -31,6 +31,12 @@ class QueueHandlerTests(unittest.TestCase):
         )
         self.assertEqual((route, method, body), ("/v1/models", "GET", None))
 
+    def test_openai_models_route_with_empty_input_is_get(self):
+        route, method, body = queue_handler.normalize_job_input(
+            {"openai_route": "/v1/models", "openai_input": {}}
+        )
+        self.assertEqual((route, method, body), ("/v1/models", "GET", None))
+
     def test_legacy_chat_adds_model_and_sampling_parameters(self):
         with patch.dict(os.environ, {"MODEL_ID": "served-model"}, clear=True):
             route, method, body = queue_handler.normalize_job_input(
@@ -45,15 +51,66 @@ class QueueHandlerTests(unittest.TestCase):
         self.assertEqual(body["max_tokens"], 8)
         self.assertFalse(body["stream"])
 
+    def test_legacy_prompt_uses_ninfer_chat_route(self):
+        with patch.dict(os.environ, {"MODEL_ID": "served-model"}, clear=True):
+            route, method, body = queue_handler.normalize_job_input(
+                {"prompt": "hi", "sampling_params": {"max_tokens": 8}}
+            )
+        self.assertEqual(route, "/v1/chat/completions")
+        self.assertEqual(method, "POST")
+        self.assertEqual(
+            body["messages"], [{"role": "user", "content": "hi"}]
+        )
+        self.assertNotIn("prompt", body)
+
     def test_invalid_job_shape_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "must contain"):
             queue_handler.normalize_job_input({})
+
+
+class SSEFrameTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sse_frames_are_reassembled_and_split(self):
+        async def chunks():
+            yield b'data: {"choices":[{"delta":{"content":"h"},"finish_reason":null}]}\n\n'
+            yield b'data: {"choices":[{"delta":{},"finish_'
+            yield b'reason":"stop"}]}\n\ndata: [DO'
+            yield b'NE]\n\n'
+
+        output = [frame async for frame in queue_handler.iter_sse_frames(chunks())]
+        self.assertEqual(
+            output,
+            [
+                'data: {"choices":[{"delta":{"content":"h"},"finish_reason":null}]}\n\n',
+                'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+                "data: [DONE]\n\n",
+            ],
+        )
+
+    async def test_sse_frames_accept_crlf_and_flush_trailing_data(self):
+        async def chunks():
+            yield b"event: message\r\ndata: one\r\n\r\ndata: trailing"
+
+        output = [frame async for frame in queue_handler.iter_sse_frames(chunks())]
+        self.assertEqual(output, ["event: message\r\ndata: one\r\n\r\n", "data: trailing"])
 
 
 class QueueProxyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         async def chat(request):
             body = await request.json()
+            if body.get("stream"):
+                response = web.StreamResponse(
+                    status=200, headers={"Content-Type": "text/event-stream"}
+                )
+                await response.prepare(request)
+                await response.write(
+                    b'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}\n\n'
+                )
+                await response.write(
+                    b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+                )
+                await response.write_eof()
+                return response
             return web.json_response(
                 {
                     "id": "test-response",
@@ -93,6 +150,26 @@ class QueueProxyTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(output[0]["model"], "served-model")
         self.assertEqual(output[0]["choices"][0]["message"]["content"], "hi")
+
+    async def test_streaming_request_yields_complete_openai_sse_frames(self):
+        output = [
+            item
+            async for item in queue_handler.handler(
+                {
+                    "input": {
+                        "openai_route": "/v1/chat/completions",
+                        "openai_input": {
+                            "model": "served-model",
+                            "messages": [{"role": "user", "content": "hi"}],
+                            "stream": True,
+                        },
+                    }
+                }
+            )
+        ]
+        self.assertEqual(len(output), 3)
+        self.assertIn('"finish_reason":"stop"', output[1])
+        self.assertEqual(output[2], "data: [DONE]\n\n")
 
 
 if __name__ == "__main__":

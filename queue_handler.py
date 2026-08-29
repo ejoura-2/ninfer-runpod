@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import AsyncIterable
 from typing import Any, AsyncGenerator
 
 import aiohttp
@@ -16,7 +17,6 @@ NINFER_BASE_URL = os.getenv(
 )
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "3600"))
 DEFAULT_CHAT_ROUTE = "/v1/chat/completions"
-DEFAULT_COMPLETION_ROUTE = "/v1/completions"
 
 ninfer_process = None
 
@@ -27,7 +27,7 @@ def _is_ninfer_alive() -> bool:
 
 def normalize_job_input(job_input: dict[str, Any]) -> tuple[str, str, dict | None]:
     """Return a local NInfer route, HTTP method, and optional request body."""
-    if "openai_input" in job_input:
+    if job_input.get("openai_input"):
         route = job_input.get("openai_route") or DEFAULT_CHAT_ROUTE
         return route, "POST", job_input["openai_input"]
 
@@ -54,8 +54,47 @@ def normalize_job_input(job_input: dict[str, Any]) -> tuple[str, str, dict | Non
         body["messages"] = messages
         return DEFAULT_CHAT_ROUTE, "POST", body
 
-    body["prompt"] = prompt
-    return DEFAULT_COMPLETION_ROUTE, "POST", body
+    # NInfer intentionally exposes Chat Completions rather than the legacy
+    # OpenAI /v1/completions route. Preserve the shorthand by promoting the
+    # prompt to a user message.
+    body["messages"] = [{"role": "user", "content": prompt}]
+    return DEFAULT_CHAT_ROUTE, "POST", body
+
+
+async def iter_sse_frames(chunks: AsyncIterable[bytes]) -> AsyncGenerator[str, None]:
+    """Yield complete SSE events regardless of upstream TCP chunk boundaries.
+
+    Runpod serializes each handler yield as one streamed output item. NInfer can
+    split one SSE event across reads or coalesce the terminal finish_reason and
+    [DONE] events into one read, so forwarding ``iter_any()`` chunks verbatim can
+    make OpenAI clients miss the terminal finish_reason. Reframing here keeps the
+    wire payload unchanged while making every yield one complete SSE event.
+    """
+    buffer = bytearray()
+    async for chunk in chunks:
+        if not chunk:
+            continue
+        buffer.extend(chunk)
+        while True:
+            lf_boundary = buffer.find(b"\n\n")
+            crlf_boundary = buffer.find(b"\r\n\r\n")
+            boundaries = [
+                (index, size)
+                for index, size in ((lf_boundary, 2), (crlf_boundary, 4))
+                if index >= 0
+            ]
+            if not boundaries:
+                break
+            index, size = min(boundaries, key=lambda item: item[0])
+            end = index + size
+            frame = bytes(buffer[:end])
+            del buffer[:end]
+            yield frame.decode("utf-8", errors="replace")
+
+    # SSE permits dispatching the final event at EOF even without a blank-line
+    # separator. Forward it rather than silently discarding a useful error.
+    if buffer:
+        yield bytes(buffer).decode("utf-8", errors="replace")
 
 
 def _error(message: str) -> dict[str, dict[str, str | None]]:
@@ -108,8 +147,8 @@ async def handler(job: dict[str, Any]) -> AsyncGenerator[Any, None]:
 
                 wants_stream = isinstance(body, dict) and body.get("stream") is True
                 if wants_stream:
-                    async for chunk in response.content.iter_any():
-                        yield chunk.decode("utf-8", errors="replace")
+                    async for frame in iter_sse_frames(response.content.iter_any()):
+                        yield frame
                 else:
                     yield await response.json(content_type=None)
     except (aiohttp.ClientError, TimeoutError) as exc:
